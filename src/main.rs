@@ -301,6 +301,20 @@ impl CodeStats {
             },
         )
     }
+
+    fn csv_headers() -> [String; 8] {
+        [
+            "filename".to_string(),
+            "static_mut_items".into(),
+            "total_fns".into(),
+            "total_lines".into(),
+            "total_statements".into(),
+            "unsafe_fns".into(),
+            "unsafe_statements".into(),
+            "unwraps".into(),
+        ]
+    }
+
     fn to_csv_row(&self, filename: String) -> [String; 8] {
         [
             filename,
@@ -549,6 +563,7 @@ async fn main() {
     if let Some(output_file) = &args.csv {
         let mut writer = csv::WriterBuilder::new().from_path(output_file).unwrap();
 
+        writer.serialize(CodeStats::csv_headers()).unwrap();
         for (filename, code_stats) in report.files.iter() {
             writer
                 .serialize(code_stats.to_csv_row(filename.to_string()))
@@ -578,6 +593,10 @@ Total unwrap calls: {unwraps}
 
     if let Some(baseline_file) = &args.baseline {
         let mut reader = csv::Reader::from_path(baseline_file).unwrap();
+
+        // Validate CSV headers
+        let headers: Vec<String> = reader.headers().unwrap().into_iter().map(|h| h.to_string()).collect();
+        assert_eq!(headers, CodeStats::csv_headers(), "CSV headers do not match expected format");
 
         let files = reader
             .records()
