@@ -314,7 +314,7 @@ impl CodeStats {
             || self.unwraps != *unwraps
     }
 
-    fn from_csv_row(value: &[&str; 8]) -> (String, Self) {
+    fn from_csv_row(value: &[&str; 8]) -> Option<(String, Self)> {
         let [
             filename,
             static_mut_items,
@@ -326,18 +326,18 @@ impl CodeStats {
             unwraps,
         ] = value;
 
-        (
+        Some((
             filename.to_string(),
             Self {
-                static_mut_items: static_mut_items.parse().unwrap(),
-                total_fns: total_fns.parse().unwrap(),
-                total_lines: total_lines.parse().unwrap(),
-                total_statements: total_statements.parse().unwrap(),
-                unsafe_fns: unsafe_fns.parse().unwrap(),
-                unsafe_statements: unsafe_statements.parse().unwrap(),
-                unwraps: unwraps.parse().unwrap(),
+                static_mut_items: static_mut_items.parse().ok()?,
+                total_fns: total_fns.parse().ok()?,
+                total_lines: total_lines.parse().ok()?,
+                total_statements: total_statements.parse().ok()?,
+                unsafe_fns: unsafe_fns.parse().ok()?,
+                unsafe_statements: unsafe_statements.parse().ok()?,
+                unwraps: unwraps.parse().ok()?,
             },
-        )
+        ))
     }
 
     fn csv_headers() -> [String; 8] {
@@ -716,7 +716,7 @@ Total unwrap calls: {unwraps}
                 let record = result.unwrap();
                 let row: [&str; 8] = record.deserialize(None).unwrap();
 
-                CodeStats::from_csv_row(&row)
+                CodeStats::from_csv_row(&row).unwrap()
             })
             .collect::<BTreeMap<String, CodeStats>>();
         let old_report = Report {
@@ -758,7 +758,7 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
         .filter_map(|result| {
             let record = result.ok()?;
             let row: [&str; 8] = record.deserialize(None).ok()?;
-            Some(CodeStats::from_csv_row(&row))
+            CodeStats::from_csv_row(&row)
         })
         .collect::<BTreeMap<String, CodeStats>>();
 
