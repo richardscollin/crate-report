@@ -610,7 +610,7 @@ async fn main() {
         eprintln!("Error: No Cargo.toml found in '{}'", expanded_path);
         eprintln!("Please specify a valid Rust crate directory.");
         eprintln!();
-        cmd.print_help().unwrap();
+        _ = cmd.print_help();
         std::process::exit(1);
     }
 
