@@ -1,0 +1,680 @@
+use std::{
+    cmp,
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    iter::{Iterator, Sum},
+    path::Path,
+};
+
+use colored::{Color, ColoredString, Colorize};
+use rayon::prelude::*;
+use syn::{ExprMethodCall, ExprUnsafe, ItemFn, ItemStatic, StaticMutability, Stmt, visit::Visit};
+use walkdir::WalkDir;
+
+#[derive(Clone, Debug, Default)]
+struct CodeStats {
+    static_mut_items: isize,
+    total_fns: isize,
+    total_lines: isize,
+    total_statements: isize,
+    unsafe_fns: isize,
+    unsafe_statements: isize,
+    unwraps: isize,
+}
+
+#[derive(Clone)]
+struct Report {
+    files: BTreeMap<String, CodeStats>,
+    total: CodeStats,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct Change<T> {
+    after: T,
+    before: T,
+}
+
+impl<T> Change<T> {
+    fn project<U>(&self, f: impl Fn(&T) -> U) -> Change<U> {
+        Change {
+            after: f(&self.after),
+            before: f(&self.before),
+        }
+    }
+}
+
+enum Diff {
+    Added(CodeStats),
+    Changed(Change<CodeStats>),
+    Removed(CodeStats),
+}
+
+struct DiffReport {
+    after_total: CodeStats,
+    before_total: CodeStats,
+    changes: BTreeMap<String /* filename */, Diff>,
+}
+
+impl DiffReport {
+    fn color_display<W>(&self, mut out: W)
+    where
+        W: std::io::Write,
+    {
+        if self.changes.is_empty() {
+            _ = writeln!(&mut out, "No changes");
+        }
+
+        // summary
+        _ = writeln!(
+            out,
+            "Summary
+=======
+unsafe fn  : {}
+total fn   : {}
+total stmt : {}
+static mut : {}
+unwraps    : {}
+",
+            format_diff(
+                self.before_total.unsafe_fns,
+                self.after_total.unsafe_fns,
+                DecreaseIs::Good
+            ),
+            format_diff(
+                self.before_total.total_fns,
+                self.after_total.total_fns,
+                DecreaseIs::Neutral
+            ),
+            format_diff(
+                self.before_total.unsafe_statements,
+                self.after_total.unsafe_statements,
+                DecreaseIs::Good
+            ),
+            format_diff(
+                self.before_total.static_mut_items,
+                self.after_total.static_mut_items,
+                DecreaseIs::Good
+            ),
+            format_diff(
+                self.before_total.unwraps,
+                self.after_total.unwraps,
+                DecreaseIs::Good
+            ),
+        );
+
+        // print in order: changed, added, removed
+
+        for (filename, diff) in &self.changes {
+            if let Diff::Changed(change) = diff {
+                let unsafe_fns = change.project(|e| e.unsafe_fns);
+                let total_fns = change.project(|e| e.total_fns);
+
+                _ = writeln!(
+                    out,
+                    "{filename}
+unsafe fn   : {}
+unsafe stmt : {}
+static mut  : {}
+unwraps     : {}
+",
+                    format_unsafe_fn_change(unsafe_fns, total_fns),
+                    format_diff(
+                        change.before.unsafe_statements,
+                        change.after.unsafe_statements,
+                        DecreaseIs::Good
+                    ),
+                    format_diff(
+                        change.before.static_mut_items,
+                        change.after.static_mut_items,
+                        DecreaseIs::Good
+                    ),
+                    format_diff(
+                        change.before.unwraps,
+                        change.after.unwraps,
+                        DecreaseIs::Good
+                    ),
+                );
+            }
+        }
+
+        for (filename, diff) in &self.changes {
+            if let Diff::Added(CodeStats {
+                unsafe_fns,
+                total_fns,
+                unsafe_statements,
+                unwraps,
+                ..
+            }) = diff
+            {
+                _ = writeln!(
+                    out,
+                    "{filename} [NEW FILE]
+  Unsafe funcs: {unsafe_fns}
+   Total funcs: {total_fns}
+  Unsafe stmts: {unsafe_statements}
+       unwraps: {unwraps}
+"
+                );
+            }
+        }
+
+        for (filename, diff) in &self.changes {
+            if let Diff::Removed(CodeStats {
+                unsafe_fns,
+                total_fns,
+                unsafe_statements,
+                ..
+            }) = diff
+            {
+                _ = writeln!(
+                    out,
+                    "{filename} [REMOVED]
+  Had {unsafe_fns} unsafe / {total_fns} total fns, {unsafe_statements} unsafe lines\n"
+                );
+            }
+        }
+    }
+}
+
+impl Report {
+    fn diff(&self, baseline: &Self) -> DiffReport {
+        let all_files: BTreeSet<&str> = baseline
+            .files
+            .keys()
+            .chain(self.files.keys())
+            .map(|e| e.as_str())
+            .collect();
+
+        DiffReport {
+            after_total: self.total.clone(),
+            before_total: baseline.total.clone(),
+
+            changes: all_files
+                .into_iter()
+                .flat_map(|filename| {
+                    match (
+                        baseline.files.get(filename).cloned(),
+                        self.files.get(filename).cloned(),
+                    ) {
+                        (Some(before), Some(after)) if before.should_report_change(&after) => {
+                            Some((
+                                filename.to_string(),
+                                Diff::Changed(Change { before, after }),
+                            ))
+                        }
+                        (None, Some(new)) => Some((filename.to_string(), Diff::Added(new))),
+                        (Some(old), None) => Some((filename.to_string(), Diff::Removed(old))),
+                        (_, _) => None,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    fn to_table(&self) -> Table<5> {
+        let mut table = Table::with_headers([
+            "".into(),
+            " (unsafe/total) fns".into(),
+            "statements".into(),
+            "static mut".into(),
+            "unwrap".into(),
+        ]);
+        table.extend_rows(self.files.iter().map(|(filename, file_report)| {
+            [
+                style_filename(filename, file_report), // filename
+                colorize_ratio(file_report.unsafe_fns, file_report.total_fns), // unsafe fns
+                format!(
+                    "{}/{}",
+                    file_report.unsafe_statements, file_report.total_statements
+                )
+                .into(), // unsafe statements
+                colorize_simple(file_report.static_mut_items), // static mut
+                colorize_simple(file_report.unwraps),  // unwraps
+            ]
+        }));
+        table
+    }
+}
+
+impl CodeStats {
+    fn is_perfect(&self) -> bool {
+        self.unsafe_fns == 0
+            && self.unsafe_statements == 0
+            && self.static_mut_items == 0
+            && self.unwraps == 0
+    }
+
+    fn should_report_change(&self, rhs: &Self) -> bool {
+        let Self {
+            total_fns: _,        // ignore
+            total_statements: _, // ignore
+            total_lines: _,      // ignore
+
+            unsafe_fns,
+            unsafe_statements,
+            static_mut_items,
+            unwraps,
+        } = rhs;
+
+        self.unsafe_fns != *unsafe_fns
+            || self.unsafe_statements != *unsafe_statements
+            || self.static_mut_items != *static_mut_items
+            || self.unwraps != *unwraps
+    }
+
+    fn from_csv_row(value: &[&str; 8]) -> (String, Self) {
+        let [
+            filename,
+            static_mut_items,
+            total_fns,
+            total_lines,
+            total_statements,
+            unsafe_fns,
+            unsafe_statements,
+            unwraps,
+        ] = value;
+
+        (
+            filename.to_string(),
+            Self {
+                static_mut_items: static_mut_items.parse().unwrap(),
+                total_fns: total_fns.parse().unwrap(),
+                total_lines: total_lines.parse().unwrap(),
+                total_statements: total_statements.parse().unwrap(),
+                unsafe_fns: unsafe_fns.parse().unwrap(),
+                unsafe_statements: unsafe_statements.parse().unwrap(),
+                unwraps: unwraps.parse().unwrap(),
+            },
+        )
+    }
+    fn to_csv_row(&self, filename: String) -> [String; 8] {
+        [
+            filename,
+            self.static_mut_items.to_string(),
+            self.total_fns.to_string(),
+            self.total_lines.to_string(),
+            self.total_statements.to_string(),
+            self.unsafe_fns.to_string(),
+            self.unsafe_statements.to_string(),
+            self.unwraps.to_string(),
+        ]
+    }
+}
+
+impl Sum for CodeStats {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.reduce(
+            |mut acc,
+             CodeStats {
+                 static_mut_items,
+                 total_fns,
+                 total_lines,
+                 total_statements,
+                 unsafe_fns,
+                 unsafe_statements,
+                 unwraps,
+             }| {
+                acc.static_mut_items += static_mut_items;
+                acc.static_mut_items += static_mut_items;
+                acc.total_fns += total_fns;
+                acc.total_lines += total_lines;
+                acc.total_statements += total_statements;
+                acc.unsafe_fns += unsafe_fns;
+                acc.unsafe_statements += unsafe_statements;
+                acc.unwraps += unwraps;
+                acc
+            },
+        )
+        .unwrap_or_default()
+    }
+}
+
+struct CodeAnalyzer<'a> {
+    stats: &'a mut CodeStats,
+}
+impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
+    fn visit_expr_method_call(&mut self, i: &'ast ExprMethodCall) {
+        if i.method == "unwrap" {
+            self.stats.unwraps += 1;
+        }
+        syn::visit::visit_expr_method_call(self, i);
+    }
+
+    fn visit_expr_unsafe(&mut self, i: &'ast ExprUnsafe) {
+        self.stats.unsafe_statements += i.block.stmts.len() as isize;
+        syn::visit::visit_expr_unsafe(self, i);
+    }
+
+    fn visit_item_fn(&mut self, i: &'ast ItemFn) {
+        self.stats.total_fns += 1;
+        if i.sig.unsafety.is_some() {
+            self.stats.unsafe_fns += 1;
+        }
+        syn::visit::visit_item_fn(self, i);
+    }
+
+    fn visit_item_static(&mut self, i: &'ast ItemStatic) {
+        if !matches!(i.mutability, StaticMutability::None) {
+            self.stats.static_mut_items += 1;
+        }
+        syn::visit::visit_item_static(self, i);
+    }
+
+    fn visit_stmt(&mut self, i: &'ast Stmt) {
+        self.stats.total_statements += 1;
+        syn::visit::visit_stmt(self, i);
+    }
+}
+
+fn analyze_file(path: &Path) -> Option<CodeStats> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let syntax = syn::parse_file(&content).ok()?;
+
+    let mut stats = CodeStats::default();
+    let mut visitor = CodeAnalyzer { stats: &mut stats };
+    visitor.visit_file(&syntax);
+
+    Some(stats)
+}
+
+fn generate_report(root: &str) -> Report {
+    let root_path = Path::new(root);
+    let file_paths: Vec<_> = WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| {
+            e.file_name()
+                .to_str()
+                .map(|s| s != "target")
+                .unwrap_or(true)
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == "rs").unwrap_or(false))
+        .collect();
+
+    let file_reports = file_paths
+        .par_iter()
+        .flat_map(|e| {
+            let path = e.path();
+            let stats = analyze_file(path)?;
+            let relative_path = path
+                .strip_prefix(root_path)
+                .expect("must start with root prefix while walking dir");
+            Some((relative_path.display().to_string(), stats))
+        })
+        .collect::<BTreeMap<String, CodeStats>>();
+
+    Report {
+        total: file_reports.values().cloned().sum(),
+        files: file_reports,
+    }
+}
+
+enum DecreaseIs {
+    Good,
+    Neutral,
+}
+fn format_diff(old: isize, new: isize, decrease_is: DecreaseIs) -> String {
+    let delta = new - old;
+
+    if delta == 0 {
+        return format!("{old} (no change)")
+            .color(Color::BrightBlack)
+            .to_string();
+    }
+
+    let plus = if delta > 0 { "+" } else { "" };
+    let color = match decrease_is {
+        DecreaseIs::Neutral => Color::BrightBlack,
+        DecreaseIs::Good => {
+            if delta > 0 {
+                Color::Red
+            } else if delta < 0 {
+                Color::Green
+            } else {
+                Color::BrightBlack
+            }
+        }
+    };
+
+    format!("{old} -> {new} ({plus}{delta})")
+        .color(color)
+        .to_string()
+}
+
+fn format_unsafe_fn_change(unsafe_fn: Change<isize>, total_fn: Change<isize>) -> String {
+    let unsafe_lines_changed = unsafe_fn.after - unsafe_fn.before;
+    let total_lines_changed = total_fn.after - total_fn.before;
+
+    if unsafe_lines_changed == 0 && total_lines_changed == 0 {
+        return format!("{}/{} (no change)", unsafe_fn.after, total_fn.after)
+            .color(Color::White)
+            .to_string();
+    }
+
+    let (sign, color) = match unsafe_lines_changed.cmp(&0) {
+        cmp::Ordering::Less => ("-", Color::Green),
+        cmp::Ordering::Greater => ("+", Color::Red),
+        cmp::Ordering::Equal => ("", Color::White),
+    };
+
+    format!(
+        "{}/{} -> {}/{} ({sign}{})",
+        unsafe_fn.before,
+        total_fn.before,
+        unsafe_fn.after,
+        total_fn.after,
+        unsafe_lines_changed.abs()
+    )
+    .color(color)
+    .to_string()
+}
+
+fn style_filename(filename: &str, stats: &CodeStats) -> ColoredString {
+    if stats.is_perfect() {
+        filename.color(Color::Green)
+    } else {
+        filename.into()
+    }
+}
+
+fn colorize_percentage(unsafe_count: isize, total_count: isize) -> ColoredString {
+    let color = if total_count == 0 {
+        Color::BrightBlack
+    } else if unsafe_count == 0 {
+        Color::Green
+    } else if (unsafe_count as f64 / total_count as f64) < 0.5 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let percentage = if total_count == 0 {
+        0.0
+    } else {
+        (unsafe_count as f64 / total_count as f64) * 100.0
+    };
+
+    format!("{percentage:.02}% ({unsafe_count} / {total_count})").color(color)
+}
+
+fn colorize_ratio(unsafe_count: isize, total_count: isize) -> ColoredString {
+    let color = if total_count == 0 {
+        Color::BrightBlack
+    } else if unsafe_count == 0 {
+        Color::Green
+    } else if (unsafe_count as f64 / total_count as f64) < 0.5 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    format!("{unsafe_count}/{total_count}").color(color)
+}
+
+/// colorize such that zero is green, single digit is yellow, more then that is red
+fn colorize_simple(count: isize) -> ColoredString {
+    let color = if count == 0 {
+        Color::Green
+    } else if count < 10 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    count.to_string().color(color)
+}
+
+#[tokio::main]
+async fn main() {
+    let flags: HashSet<String> = std::env::args()
+        .filter(|arg| arg.starts_with('-'))
+        .collect();
+
+    let flags_with_args: HashMap<String, String> = std::env::args()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter_map(|e| {
+            e[0].starts_with('-')
+                .then_some((e[0].clone(), e[1].clone()))
+        })
+        .collect();
+
+    let args = std::env::args().collect::<Vec<String>>();
+    if args.len() < 2 || flags.contains("-h") || flags.contains("--help") {
+        println!(
+            "Usage: ./unsafe_usage_analyzer.rs <crate-root> [--baseline baseline-report.csv] [--csv report-output.csv]"
+        );
+        return;
+    }
+
+    let root = &args[1];
+    let report = generate_report(root);
+
+    if let Some(output_file) = flags_with_args.get("--csv") {
+        let mut writer = csv::WriterBuilder::new().from_path(output_file).unwrap();
+
+        for (filename, code_stats) in report.files.iter() {
+            writer
+                .serialize(code_stats.to_csv_row(filename.to_string()))
+                .unwrap();
+        }
+    }
+
+    let CodeStats {
+        total_lines,
+        unsafe_statements,
+        static_mut_items,
+        unwraps,
+        ..
+    } = report.total;
+    println!(
+        "Code Report
+===========
+Total lines: {total_lines}
+Total unsafe functions: {}
+Total statements in unsafe blocks: {unsafe_statements}
+Total static mut items: {static_mut_items}
+Total unwrap calls: {unwraps}
+",
+        colorize_percentage(report.total.unsafe_fns, report.total.total_fns)
+    );
+    report.to_table().to_markdown(std::io::stdout());
+
+    if let Some(baseline_file) = flags_with_args.get("--baseline") {
+        let mut reader = csv::Reader::from_path(baseline_file).unwrap();
+
+        let files = reader
+            .records()
+            .map(|result| {
+                let record = result.unwrap();
+                let row: [&str; 8] = record.deserialize(None).unwrap();
+
+                CodeStats::from_csv_row(&row)
+            })
+            .collect::<BTreeMap<String, CodeStats>>();
+        let old_report = Report {
+            total: files.values().cloned().sum(),
+            files,
+        };
+
+        println!();
+        println!();
+        report.diff(&old_report).color_display(std::io::stdout());
+    }
+}
+
+/// A helper for displaying a table of data
+struct Table<const N: usize> {
+    headers: [ColoredString; N],
+    rows: Vec<[ColoredString; N]>,
+}
+impl<const N: usize> Table<N> {
+    fn with_headers(headers: [ColoredString; N]) -> Self {
+        Self {
+            headers,
+            rows: Vec::new(),
+        }
+    }
+
+    fn extend_rows<I>(&mut self, rows: I)
+    where
+        I: Iterator<Item = [ColoredString; N]>,
+    {
+        self.rows.extend(rows)
+    }
+
+    fn to_markdown<W>(&self, mut out: W)
+    where
+        W: std::io::Write,
+    {
+        let rows = Some(&self.headers).into_iter().chain(&self.rows);
+
+        let mut column_widths = vec![0; N];
+        for row in rows.clone() {
+            for (c, text) in row.iter().enumerate() {
+                column_widths[c] = column_widths[c].max(text.len());
+            }
+        }
+
+        // headers
+        {
+            let mut it = self.headers.iter().zip(&column_widths);
+
+            // left align first column
+            let (col, width) = it.next().unwrap();
+            _ = write!(&mut out, "{col:<width$} | ");
+
+            // right align other columns
+            for (col, width) in it {
+                _ = write!(&mut out, " {col:>width$} |");
+            }
+            _ = writeln!(&mut out);
+        }
+
+        // "| -- | -: | -: | -: | -: |\n"
+        {
+            let mut it = column_widths.iter();
+            let width = it.next().unwrap();
+            _ = write!(&mut out, "{:-<width$} | ", ":");
+
+            // right align other columns
+            for width in it {
+                _ = write!(&mut out, " {:->width$} |", ":");
+            }
+            _ = writeln!(&mut out);
+        }
+
+        for row in &self.rows {
+            let mut it = row.iter().zip(&column_widths);
+
+            // left align first column
+            let (col, width) = it.next().unwrap();
+            _ = write!(&mut out, "{col:<width$} | ");
+
+            // right align other columns
+            for (col, width) in it {
+                _ = write!(&mut out, " {col:>width$} |");
+            }
+            _ = writeln!(&mut out);
+        }
+    }
+}
