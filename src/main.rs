@@ -629,9 +629,7 @@ async fn main() {
 
             _ = writer.serialize(CodeStats::csv_headers());
             for (filename, code_stats) in report.files.iter() {
-                writer
-                    .serialize(code_stats.to_csv_row(filename.to_string()))
-                    .unwrap();
+                _ = writer.serialize(code_stats.to_csv_row(filename.to_string()));
             }
         }
         OutputFormat::Html => {
@@ -781,7 +779,8 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
 
     // Summary section
     let unsafe_fn_delta = diff.after_total.unsafe_fns - diff.before_total.unsafe_fns;
-    let unsafe_stmt_delta = diff.after_total.unsafe_statements - diff.before_total.unsafe_statements;
+    let unsafe_stmt_delta =
+        diff.after_total.unsafe_statements - diff.before_total.unsafe_statements;
     let static_mut_delta = diff.after_total.static_mut_items - diff.before_total.static_mut_items;
     let unwrap_delta = diff.after_total.unwraps - diff.before_total.unwraps;
 
@@ -793,31 +792,53 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
          | Unsafe Statements | {} | {} | {} |\n\
          | Static Mut Items | {} | {} | {} |\n\
          | Unwrap Calls | {} | {} | {} |\n\n",
-        diff.before_total.unsafe_fns, diff.after_total.unsafe_fns, format_pr_delta(unsafe_fn_delta),
-        diff.before_total.unsafe_statements, diff.after_total.unsafe_statements, format_pr_delta(unsafe_stmt_delta),
-        diff.before_total.static_mut_items, diff.after_total.static_mut_items, format_pr_delta(static_mut_delta),
-        diff.before_total.unwraps, diff.after_total.unwraps, format_pr_delta(unwrap_delta)
+        diff.before_total.unsafe_fns,
+        diff.after_total.unsafe_fns,
+        format_pr_delta(unsafe_fn_delta),
+        diff.before_total.unsafe_statements,
+        diff.after_total.unsafe_statements,
+        format_pr_delta(unsafe_stmt_delta),
+        diff.before_total.static_mut_items,
+        diff.after_total.static_mut_items,
+        format_pr_delta(static_mut_delta),
+        diff.before_total.unwraps,
+        diff.after_total.unwraps,
+        format_pr_delta(unwrap_delta)
     ));
 
     // Overall assessment
-    let total_negative_changes = [unsafe_fn_delta, unsafe_stmt_delta, static_mut_delta, unwrap_delta]
-        .iter()
-        .filter(|&&x| x > 0)
-        .count();
+    let total_negative_changes = [
+        unsafe_fn_delta,
+        unsafe_stmt_delta,
+        static_mut_delta,
+        unwrap_delta,
+    ]
+    .iter()
+    .filter(|&&x| x > 0)
+    .count();
 
-    let total_positive_changes = [unsafe_fn_delta, unsafe_stmt_delta, static_mut_delta, unwrap_delta]
-        .iter()
-        .filter(|&&x| x < 0)
-        .count();
+    let total_positive_changes = [
+        unsafe_fn_delta,
+        unsafe_stmt_delta,
+        static_mut_delta,
+        unwrap_delta,
+    ]
+    .iter()
+    .filter(|&&x| x < 0)
+    .count();
 
     if total_negative_changes == 0 && total_positive_changes > 0 {
         out.push_str("**Safety improved!** This PR reduces unsafe code usage.\n\n");
     } else if total_negative_changes > 0 && total_positive_changes == 0 {
         out.push_str("**Safety decreased.** This PR introduces more unsafe code.\n\n");
     } else if total_negative_changes > 0 && total_positive_changes > 0 {
-        out.push_str("**Mixed changes.** This PR has both safety improvements and regressions.\n\n");
+        out.push_str(
+            "**Mixed changes.** This PR has both safety improvements and regressions.\n\n",
+        );
     } else {
-        out.push_str("**No safety changes.** File changes detected but no impact on safety metrics.\n\n");
+        out.push_str(
+            "**No safety changes.** File changes detected but no impact on safety metrics.\n\n",
+        );
     }
 
     // Detailed changes (collapsible if many changes)
@@ -844,19 +865,29 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
             Diff::Changed(change) => {
                 let mut changes = Vec::new();
                 if change.before.unsafe_fns != change.after.unsafe_fns {
-                    changes.push(format!("unsafe functions: {} → {}", change.before.unsafe_fns, change.after.unsafe_fns));
+                    changes.push(format!(
+                        "unsafe functions: {} → {}",
+                        change.before.unsafe_fns, change.after.unsafe_fns
+                    ));
                 }
                 if change.before.unsafe_statements != change.after.unsafe_statements {
-                    changes.push(format!("unsafe statements: {} → {}", change.before.unsafe_statements, change.after.unsafe_statements));
+                    changes.push(format!(
+                        "unsafe statements: {} → {}",
+                        change.before.unsafe_statements, change.after.unsafe_statements
+                    ));
                 }
                 if change.before.unwraps != change.after.unwraps {
-                    changes.push(format!("unwraps: {} → {}", change.before.unwraps, change.after.unwraps));
+                    changes.push(format!(
+                        "unwraps: {} → {}",
+                        change.before.unwraps, change.after.unwraps
+                    ));
                 }
 
                 if !changes.is_empty() {
                     out.push_str(&format!(
                         "- **{}** [MODIFIED]\n  - {}\n",
-                        filename, changes.join(", ")
+                        filename,
+                        changes.join(", ")
                     ));
                 }
             }
@@ -867,7 +898,9 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
         out.push_str("\n</details>\n");
     }
 
-    out.push_str("\n---\n*Generated by [crate-report](https://github.com/richardscollin/crate-report)*");
+    out.push_str(
+        "\n---\n*Generated by [crate-report](https://github.com/richardscollin/crate-report)*",
+    );
 
     out
 }
