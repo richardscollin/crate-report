@@ -19,6 +19,11 @@ jobs:
     name: Analyze Rust Safety
 
     steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Run Safety Analysis
         uses: richardscollin/crate-report@v0.1-alpha
         with:
