@@ -1,3 +1,5 @@
+mod html;
+
 use std::{
     cmp,
     collections::{
@@ -56,6 +58,7 @@ struct Args {
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum OutputFormat {
     Csv,
+    Html,
     Markdown,
 }
 
@@ -630,6 +633,15 @@ async fn main() {
                     .unwrap();
             }
         }
+        OutputFormat::Html => {
+            let output_content = html::format_html_report(&report, &args);
+            if let Some(output_file) = &args.output {
+                std::fs::write(output_file, output_content).unwrap();
+            } else {
+                println!();
+                print!("{}", output_content);
+            }
+        }
         OutputFormat::Markdown => {
             if let Some(output_file) = &args.output {
                 // Disable colors when writing to file
@@ -707,6 +719,17 @@ Total unwrap calls: {unwraps}
         report.diff(&old_report).color_display(&mut out);
     }
     String::from_utf8(out).unwrap()
+}
+
+fn format_change_delta(before: isize, after: isize) -> String {
+    let delta = after - before;
+    if delta == 0 {
+        "no change".to_string()
+    } else if delta > 0 {
+        format!("+{}", delta)
+    } else {
+        delta.to_string()
+    }
 }
 
 /// A helper for displaying a table of data
