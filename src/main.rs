@@ -1,14 +1,29 @@
 use std::{
     cmp,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     iter::{Iterator, Sum},
     path::Path,
 };
 
+use clap::Parser;
 use colored::{Color, ColoredString, Colorize};
 use rayon::prelude::*;
 use syn::{ExprMethodCall, ExprUnsafe, ItemFn, ItemStatic, StaticMutability, Stmt, visit::Visit};
 use walkdir::WalkDir;
+
+#[derive(Parser)]
+#[command(name = "crate-report")]
+#[command(about = "Analyze unsafe code usage in Rust crates")]
+struct Args {
+    #[arg(help = "Root directory of the crate to analyze")]
+    crate_root: String,
+
+    #[arg(long, help = "Baseline CSV file to compare against")]
+    baseline: Option<String>,
+
+    #[arg(long, help = "Output CSV file path")]
+    csv: Option<String>,
+}
 
 #[derive(Clone, Debug, Default)]
 struct CodeStats {
@@ -525,31 +540,11 @@ fn colorize_simple(count: isize) -> ColoredString {
 
 #[tokio::main]
 async fn main() {
-    let flags: HashSet<String> = std::env::args()
-        .filter(|arg| arg.starts_with('-'))
-        .collect();
+    let args = Args::parse();
 
-    let flags_with_args: HashMap<String, String> = std::env::args()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .filter_map(|e| {
-            e[0].starts_with('-')
-                .then_some((e[0].clone(), e[1].clone()))
-        })
-        .collect();
+    let report = generate_report(&args.crate_root);
 
-    let args = std::env::args().collect::<Vec<String>>();
-    if args.len() < 2 || flags.contains("-h") || flags.contains("--help") {
-        println!(
-            "Usage: ./unsafe_usage_analyzer.rs <crate-root> [--baseline baseline-report.csv] [--csv report-output.csv]"
-        );
-        return;
-    }
-
-    let root = &args[1];
-    let report = generate_report(root);
-
-    if let Some(output_file) = flags_with_args.get("--csv") {
+    if let Some(output_file) = &args.csv {
         let mut writer = csv::WriterBuilder::new().from_path(output_file).unwrap();
 
         for (filename, code_stats) in report.files.iter() {
@@ -579,7 +574,7 @@ Total unwrap calls: {unwraps}
     );
     report.to_table().to_markdown(std::io::stdout());
 
-    if let Some(baseline_file) = flags_with_args.get("--baseline") {
+    if let Some(baseline_file) = &args.baseline {
         let mut reader = csv::Reader::from_path(baseline_file).unwrap();
 
         let files = reader
