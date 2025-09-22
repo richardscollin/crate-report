@@ -20,6 +20,6 @@ jobs:
 
     steps:
       - name: Run Safety Analysis
-        uses: richardscollin/crate-report
+        uses: richardscollin/crate-report@v0.1-alpha
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
