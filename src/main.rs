@@ -21,8 +21,17 @@ struct Args {
     #[arg(long, help = "Baseline CSV file to compare against")]
     baseline: Option<String>,
 
-    #[arg(long, help = "Output CSV file path")]
-    csv: Option<String>,
+    #[arg(long, short, help = "Output file path (defaults to stdout)")]
+    output: Option<String>,
+
+    #[arg(long, short, help = "Output format", value_enum, default_value = "markdown")]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum OutputFormat {
+    Csv,
+    Markdown,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -560,16 +569,44 @@ async fn main() {
 
     let report = generate_report(&args.crate_root);
 
-    if let Some(output_file) = &args.csv {
-        let mut writer = csv::WriterBuilder::new().from_path(output_file).unwrap();
+    // Handle output based on format
+    match args.format {
+        OutputFormat::Csv => {
+            let mut writer = csv::WriterBuilder::new().from_writer(
+                std::io::BufWriter::new(
+                    if let Some(output_file) = &args.output {
+                        Box::new(std::fs::File::create(output_file).unwrap()) as Box<dyn std::io::Write>
+                    } else {
+                        Box::new(std::io::stdout()) as Box<dyn std::io::Write>
+                    }
+                )
+            );
 
-        writer.serialize(CodeStats::csv_headers()).unwrap();
-        for (filename, code_stats) in report.files.iter() {
-            writer
-                .serialize(code_stats.to_csv_row(filename.to_string()))
-                .unwrap();
+            writer.serialize(CodeStats::csv_headers()).unwrap();
+            for (filename, code_stats) in report.files.iter() {
+                writer
+                    .serialize(code_stats.to_csv_row(filename.to_string()))
+                    .unwrap();
+            }
+        }
+        OutputFormat::Markdown => {
+            if let Some(output_file) = &args.output {
+                // Disable colors when writing to file
+                colored::control::set_override(false);
+                let output_content = format_markdown_report(&report, &args);
+                std::fs::write(output_file, output_content).unwrap();
+                // Re-enable colors for any subsequent output
+                colored::control::unset_override();
+            } else {
+                let output_content = format_markdown_report(&report, &args);
+                print!("{}", output_content);
+            }
         }
     }
+}
+
+fn format_markdown_report(report: &Report, args: &Args) -> String {
+    let mut out = Vec::<u8>::new();
 
     let CodeStats {
         total_lines,
@@ -578,7 +615,7 @@ async fn main() {
         unwraps,
         ..
     } = report.total;
-    println!(
+    out.extend(format!(
         "Code Report
 ===========
 Total lines: {total_lines}
@@ -588,8 +625,8 @@ Total static mut items: {static_mut_items}
 Total unwrap calls: {unwraps}
 ",
         colorize_percentage(report.total.unsafe_fns, report.total.total_fns)
-    );
-    report.to_table().to_markdown(std::io::stdout());
+    ).bytes());
+    report.to_table().to_markdown(&mut out);
 
     if let Some(baseline_file) = &args.baseline {
         let mut reader = csv::Reader::from_path(baseline_file).unwrap();
@@ -612,10 +649,10 @@ Total unwrap calls: {unwraps}
             files,
         };
 
-        println!();
-        println!();
-        report.diff(&old_report).color_display(std::io::stdout());
+        out.extend("\n\n".bytes());
+        report.diff(&old_report).color_display(&mut out);
     }
+        String::from_utf8(out).unwrap()
 }
 
 /// A helper for displaying a table of data
