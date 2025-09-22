@@ -627,7 +627,7 @@ async fn main() {
                 },
             ));
 
-            writer.serialize(CodeStats::csv_headers()).unwrap();
+            _ = writer.serialize(CodeStats::csv_headers());
             for (filename, code_stats) in report.files.iter() {
                 writer
                     .serialize(code_stats.to_csv_row(filename.to_string()))
