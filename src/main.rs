@@ -60,6 +60,7 @@ enum OutputFormat {
     Csv,
     Html,
     Markdown,
+    PrComment,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -656,6 +657,14 @@ async fn main() {
                 print!("{}", output_content);
             }
         }
+        OutputFormat::PrComment => {
+            let output_content = format_pr_comment_report(&report, &args);
+            if let Some(output_file) = &args.output {
+                std::fs::write(output_file, output_content).unwrap();
+            } else {
+                print!("{}", output_content);
+            }
+        }
     }
 }
 
@@ -719,6 +728,156 @@ Total unwrap calls: {unwraps}
         report.diff(&old_report).color_display(&mut out);
     }
     String::from_utf8(out).unwrap()
+}
+
+fn format_pr_comment_report(report: &Report, args: &Args) -> String {
+    // If no baseline provided, don't generate PR comment
+    let Some(baseline_file) = &args.baseline else {
+        return String::new();
+    };
+
+    // Load baseline data
+    let mut reader = match csv::Reader::from_path(baseline_file) {
+        Ok(reader) => reader,
+        Err(_) => return String::new(),
+    };
+
+    // Validate CSV headers
+    let headers: Vec<String> = match reader.headers() {
+        Ok(headers) => headers.into_iter().map(|h| h.to_string()).collect(),
+        Err(_) => return String::new(),
+    };
+
+    if headers != CodeStats::csv_headers() {
+        return String::new();
+    }
+
+    // Parse baseline data
+    let files = reader
+        .records()
+        .filter_map(|result| {
+            let record = result.ok()?;
+            let row: [&str; 8] = record.deserialize(None).ok()?;
+            Some(CodeStats::from_csv_row(&row))
+        })
+        .collect::<BTreeMap<String, CodeStats>>();
+
+    let old_report = Report {
+        total: files.values().cloned().sum(),
+        files,
+    };
+
+    let diff = report.diff(&old_report);
+
+    // If no changes, don't generate comment
+    if diff.changes.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+
+    // Header
+    out.push_str("## Safety Analysis Report\n\n");
+
+    // Summary section
+    let unsafe_fn_delta = diff.after_total.unsafe_fns - diff.before_total.unsafe_fns;
+    let unsafe_stmt_delta = diff.after_total.unsafe_statements - diff.before_total.unsafe_statements;
+    let static_mut_delta = diff.after_total.static_mut_items - diff.before_total.static_mut_items;
+    let unwrap_delta = diff.after_total.unwraps - diff.before_total.unwraps;
+
+    out.push_str("### Summary\n\n");
+    out.push_str(&format!(
+        "| Metric | Before | After | Change |\n\
+         |--------|--------|-------|--------|\n\
+         | Unsafe Functions | {} | {} | {} |\n\
+         | Unsafe Statements | {} | {} | {} |\n\
+         | Static Mut Items | {} | {} | {} |\n\
+         | Unwrap Calls | {} | {} | {} |\n\n",
+        diff.before_total.unsafe_fns, diff.after_total.unsafe_fns, format_pr_delta(unsafe_fn_delta),
+        diff.before_total.unsafe_statements, diff.after_total.unsafe_statements, format_pr_delta(unsafe_stmt_delta),
+        diff.before_total.static_mut_items, diff.after_total.static_mut_items, format_pr_delta(static_mut_delta),
+        diff.before_total.unwraps, diff.after_total.unwraps, format_pr_delta(unwrap_delta)
+    ));
+
+    // Overall assessment
+    let total_negative_changes = [unsafe_fn_delta, unsafe_stmt_delta, static_mut_delta, unwrap_delta]
+        .iter()
+        .filter(|&&x| x > 0)
+        .count();
+
+    let total_positive_changes = [unsafe_fn_delta, unsafe_stmt_delta, static_mut_delta, unwrap_delta]
+        .iter()
+        .filter(|&&x| x < 0)
+        .count();
+
+    if total_negative_changes == 0 && total_positive_changes > 0 {
+        out.push_str("**Safety improved!** This PR reduces unsafe code usage.\n\n");
+    } else if total_negative_changes > 0 && total_positive_changes == 0 {
+        out.push_str("**Safety decreased.** This PR introduces more unsafe code.\n\n");
+    } else if total_negative_changes > 0 && total_positive_changes > 0 {
+        out.push_str("**Mixed changes.** This PR has both safety improvements and regressions.\n\n");
+    } else {
+        out.push_str("**No safety changes.** File changes detected but no impact on safety metrics.\n\n");
+    }
+
+    // Detailed changes (collapsible if many changes)
+    if diff.changes.len() > 5 {
+        out.push_str("<details>\n<summary>Detailed File Changes</summary>\n\n");
+    } else {
+        out.push_str("### File Changes\n\n");
+    }
+
+    for (filename, change) in &diff.changes {
+        match change {
+            Diff::Added(stats) => {
+                out.push_str(&format!(
+                    "- **{}** [NEW]\n  - Unsafe functions: {}, Statements: {}, Unwraps: {}\n",
+                    filename, stats.unsafe_fns, stats.unsafe_statements, stats.unwraps
+                ));
+            }
+            Diff::Removed(stats) => {
+                out.push_str(&format!(
+                    "- **{}** [REMOVED]\n  - Had: {} unsafe functions, {} statements, {} unwraps\n",
+                    filename, stats.unsafe_fns, stats.unsafe_statements, stats.unwraps
+                ));
+            }
+            Diff::Changed(change) => {
+                let mut changes = Vec::new();
+                if change.before.unsafe_fns != change.after.unsafe_fns {
+                    changes.push(format!("unsafe functions: {} → {}", change.before.unsafe_fns, change.after.unsafe_fns));
+                }
+                if change.before.unsafe_statements != change.after.unsafe_statements {
+                    changes.push(format!("unsafe statements: {} → {}", change.before.unsafe_statements, change.after.unsafe_statements));
+                }
+                if change.before.unwraps != change.after.unwraps {
+                    changes.push(format!("unwraps: {} → {}", change.before.unwraps, change.after.unwraps));
+                }
+
+                if !changes.is_empty() {
+                    out.push_str(&format!(
+                        "- **{}** [MODIFIED]\n  - {}\n",
+                        filename, changes.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+
+    if diff.changes.len() > 5 {
+        out.push_str("\n</details>\n");
+    }
+
+    out.push_str("\n---\n*Generated by [crate-report](https://github.com/richardscollin/crate-report)*");
+
+    out
+}
+
+fn format_pr_delta(delta: isize) -> String {
+    match delta {
+        0 => "0".to_string(),
+        x if x > 0 => format!("+{}", x),
+        x => format!("{}", x),
+    }
 }
 
 fn format_change_delta(before: isize, after: isize) -> String {
