@@ -1,0 +1,89 @@
+name: 'Rust Safety Analysis'
+description: 'Analyze unsafe code usage in Rust projects and comment on PRs with safety reports'
+
+inputs:
+  github-token:
+    description: 'GitHub token for commenting on PRs'
+    required: true
+    default: ${{ github.token }}
+  crate-root:
+    description: 'Root directory of the crate to analyze'
+    required: false
+  base-branch:
+    description: 'Base branch to compare against for baseline'
+    required: false
+    default: ${{ github.base_ref }}
+
+outputs:
+  safety-report:
+    description: 'Path to the generated safety report file'
+    value: ${{ steps.generate-report.outputs.report-path }}
+  baseline-report:
+    description: 'Path to the baseline report file'
+    value: ${{ steps.generate-baseline.outputs.baseline-path }}
+  has-changes:
+    description: 'Whether safety changes were detected'
+    value: ${{ steps.check-changes.outputs.has-changes }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Install crate-report
+      shell: bash
+      run: |
+        # Install from the repository
+        cargo install --git https://github.com/richardscollin/crate-report crate-report
+
+    - name: Generate baseline from base branch
+      id: generate-baseline
+      shell: bash
+      working-directory: ${{ inputs.crate-root }}
+      run: |
+        git fetch origin ${{ inputs.base-branch }}
+        git checkout origin/${{ inputs.base-branch }}
+        crate-report --format csv --output baseline.csv
+        echo "baseline-path=baseline.csv" >> $GITHUB_OUTPUT
+
+    - name: Generate PR safety report
+      id: generate-report
+      shell: bash
+      run: |
+        crate-report --baseline baseline.csv --format pr-comment --output pr-comment.md
+
+        echo "report-path=pr-comment.md" >> $GITHUB_OUTPUT
+
+    - name: Check for changes
+      id: check-changes
+      shell: bash
+      run: |
+        if [ -f pr-comment.md ] && [ -s pr-comment.md ]; then
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "Safety changes detected"
+        else
+          echo "has-changes=false" >> $GITHUB_OUTPUT
+          echo "No significant safety changes detected"
+        fi
+
+    - name: Comment on PR
+      if: github.event_name == 'pull_request' && steps.check-changes.outputs.has-changes == 'true'
+      shell: bash
+      run: |
+        # Look for existing bot comment to update
+        COMMENT_ID=$(gh pr view ${{ github.event.number }} --json comments --jq '.comments[] | select(.author.login == "github-actions[bot]" and (.body | contains("Safety Analysis"))) | .id' | head -1)
+
+        if [ -n "$COMMENT_ID" ]; then
+          echo "Updating existing comment $COMMENT_ID"
+          gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID \
+            --method PATCH \
+            --field body=@pr-comment.md
+        else
+          echo "Creating new comment"
+          gh pr comment ${{ github.event.number }} --body-file pr-comment.md
+        fi
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}

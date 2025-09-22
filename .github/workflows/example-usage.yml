@@ -1,0 +1,25 @@
+# Example workflow for using the crate-report safety analysis action
+# Copy this file to your repository's .github/workflows/ directory
+
+name: Safety Analysis
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**/*.rs'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  safety-analysis:
+    runs-on: ubuntu-latest
+    name: Analyze Rust Safety
+
+    steps:
+      - name: Run Safety Analysis
+        uses: richardscollin/crate-report
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
