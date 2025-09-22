@@ -6,9 +6,6 @@ inputs:
     description: 'GitHub token for commenting on PRs'
     required: true
     default: ${{ github.token }}
-  crate-root:
-    description: 'Root directory of the crate to analyze'
-    required: false
   base-branch:
     description: 'Base branch to compare against for baseline'
     required: false
@@ -42,7 +39,6 @@ runs:
     - name: Generate baseline from base branch
       id: generate-baseline
       shell: bash
-      working-directory: ${{ inputs.crate-root }}
       run: |
         git fetch origin ${{ inputs.base-branch }}
         git checkout origin/${{ inputs.base-branch }}
