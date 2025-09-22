@@ -59,10 +59,10 @@ runs:
       run: |
         if [ -f pr-comment.md ] && [ -s pr-comment.md ]; then
           echo "has-changes=true" >> $GITHUB_OUTPUT
-          echo "Safety changes detected"
+          echo "Generated safety analysis comment"
         else
           echo "has-changes=false" >> $GITHUB_OUTPUT
-          echo "No significant safety changes detected"
+          echo "Failed to generate safety analysis"
         fi
 
     - name: Comment on PR
