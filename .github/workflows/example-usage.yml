@@ -25,6 +25,6 @@ jobs:
           fetch-depth: 0
 
       - name: Run Safety Analysis
-        uses: richardscollin/crate-report@v0.1-alpha
+        uses: richardscollin/crate-report@v0.2-alpha
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
