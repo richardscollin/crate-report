@@ -4,3 +4,4 @@
 # use: cargo +nightly fmt
 
 group_imports = "StdExternalCrate"
+imports_layout = "Vertical"

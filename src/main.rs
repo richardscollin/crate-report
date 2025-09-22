@@ -1,21 +1,40 @@
 use std::{
     cmp,
-    collections::{BTreeMap, BTreeSet},
-    iter::{Iterator, Sum},
+    collections::{
+        BTreeMap,
+        BTreeSet,
+    },
+    iter::{
+        Iterator,
+        Sum,
+    },
     path::Path,
 };
 
+use clap::CommandFactory;
 use clap::Parser;
-use colored::{Color, ColoredString, Colorize};
+use colored::{
+    Color,
+    ColoredString,
+    Colorize,
+};
 use rayon::prelude::*;
-use syn::{ExprMethodCall, ExprUnsafe, ItemFn, ItemStatic, StaticMutability, Stmt, visit::Visit};
+use syn::{
+    ExprMethodCall,
+    ExprUnsafe,
+    ItemFn,
+    ItemStatic,
+    StaticMutability,
+    Stmt,
+    visit::Visit,
+};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(name = "crate-report")]
 #[command(about = "Analyze unsafe code usage in Rust crates")]
 struct Args {
-    #[arg(help = "Root directory of the crate to analyze")]
+    #[arg(help = "Root directory of the crate to analyze", default_value = ".")]
     crate_root: String,
 
     #[arg(long, help = "Baseline CSV file to compare against")]
@@ -24,7 +43,13 @@ struct Args {
     #[arg(long, short, help = "Output file path (defaults to stdout)")]
     output: Option<String>,
 
-    #[arg(long, short, help = "Output format", value_enum, default_value = "markdown")]
+    #[arg(
+        long,
+        short,
+        help = "Output format",
+        value_enum,
+        default_value = "markdown"
+    )]
     format: OutputFormat,
 }
 
@@ -407,8 +432,10 @@ fn analyze_file(path: &Path) -> Option<CodeStats> {
     let content = std::fs::read_to_string(path).ok()?;
     let syntax = syn::parse_file(&content).ok()?;
 
-    let mut stats = CodeStats::default();
-    stats.total_lines = content.lines().count() as isize;
+    let mut stats = CodeStats {
+        total_lines: content.lines().count() as isize,
+        ..CodeStats::default()
+    };
 
     let mut visitor = CodeAnalyzer { stats: &mut stats };
     visitor.visit_file(&syntax);
@@ -567,20 +594,34 @@ fn colorize_simple(count: isize) -> ColoredString {
 async fn main() {
     let args = Args::parse();
 
+    // Sanity check: ensure Cargo.toml exists in the crate root
+    let crate_root_path = Path::new(&args.crate_root);
+    let cargo_toml_path = crate_root_path.join("Cargo.toml");
+    if !cargo_toml_path.exists() {
+        let mut cmd = Args::command();
+        let expanded_path = crate_root_path
+            .canonicalize()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| args.crate_root.clone());
+        eprintln!("Error: No Cargo.toml found in '{}'", expanded_path);
+        eprintln!("Please specify a valid Rust crate directory.");
+        eprintln!();
+        cmd.print_help().unwrap();
+        std::process::exit(1);
+    }
+
     let report = generate_report(&args.crate_root);
 
     // Handle output based on format
     match args.format {
         OutputFormat::Csv => {
-            let mut writer = csv::WriterBuilder::new().from_writer(
-                std::io::BufWriter::new(
-                    if let Some(output_file) = &args.output {
-                        Box::new(std::fs::File::create(output_file).unwrap()) as Box<dyn std::io::Write>
-                    } else {
-                        Box::new(std::io::stdout()) as Box<dyn std::io::Write>
-                    }
-                )
-            );
+            let mut writer = csv::WriterBuilder::new().from_writer(std::io::BufWriter::new(
+                if let Some(output_file) = &args.output {
+                    Box::new(std::fs::File::create(output_file).unwrap()) as Box<dyn std::io::Write>
+                } else {
+                    Box::new(std::io::stdout()) as Box<dyn std::io::Write>
+                },
+            ));
 
             writer.serialize(CodeStats::csv_headers()).unwrap();
             for (filename, code_stats) in report.files.iter() {
@@ -599,6 +640,7 @@ async fn main() {
                 colored::control::unset_override();
             } else {
                 let output_content = format_markdown_report(&report, &args);
+                println!();
                 print!("{}", output_content);
             }
         }
@@ -615,8 +657,9 @@ fn format_markdown_report(report: &Report, args: &Args) -> String {
         unwraps,
         ..
     } = report.total;
-    out.extend(format!(
-        "Code Report
+    out.extend(
+        format!(
+            "Code Report
 ===========
 Total lines: {total_lines}
 Total unsafe functions: {}
@@ -624,16 +667,27 @@ Total statements in unsafe blocks: {unsafe_statements}
 Total static mut items: {static_mut_items}
 Total unwrap calls: {unwraps}
 ",
-        colorize_percentage(report.total.unsafe_fns, report.total.total_fns)
-    ).bytes());
+            colorize_percentage(report.total.unsafe_fns, report.total.total_fns)
+        )
+        .bytes(),
+    );
     report.to_table().to_markdown(&mut out);
 
     if let Some(baseline_file) = &args.baseline {
         let mut reader = csv::Reader::from_path(baseline_file).unwrap();
 
         // Validate CSV headers
-        let headers: Vec<String> = reader.headers().unwrap().into_iter().map(|h| h.to_string()).collect();
-        assert_eq!(headers, CodeStats::csv_headers(), "CSV headers do not match expected format");
+        let headers: Vec<String> = reader
+            .headers()
+            .unwrap()
+            .into_iter()
+            .map(|h| h.to_string())
+            .collect();
+        assert_eq!(
+            headers,
+            CodeStats::csv_headers(),
+            "CSV headers do not match expected format"
+        );
 
         let files = reader
             .records()
@@ -652,7 +706,7 @@ Total unwrap calls: {unwraps}
         out.extend("\n\n".bytes());
         report.diff(&old_report).color_display(&mut out);
     }
-        String::from_utf8(out).unwrap()
+    String::from_utf8(out).unwrap()
 }
 
 /// A helper for displaying a table of data
