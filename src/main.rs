@@ -385,6 +385,8 @@ fn analyze_file(path: &Path) -> Option<CodeStats> {
     let syntax = syn::parse_file(&content).ok()?;
 
     let mut stats = CodeStats::default();
+    stats.total_lines = content.lines().count() as isize;
+
     let mut visitor = CodeAnalyzer { stats: &mut stats };
     visitor.visit_file(&syntax);
 
