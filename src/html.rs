@@ -179,7 +179,7 @@ pub fn format_html_report(report: &Report, args: &Args) -> String {
                 .flat_map(|result| {
                     let record = result.unwrap();
                     let row: [&str; 8] = record.deserialize(None).ok()?;
-                    Some(CodeStats::from_csv_row(&row)?)
+                    CodeStats::from_csv_row(&row)
                 })
                 .collect::<std::collections::BTreeMap<String, CodeStats>>();
 
