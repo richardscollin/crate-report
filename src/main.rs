@@ -985,7 +985,7 @@ impl<const N: usize> Table<N> {
 
             // left align first column
             let (col, width) = it.next().unwrap();
-            _ = write!(&mut out, "{col:<width$} | ");
+            _ = write!(&mut out, "| {col:<width$} | ");
 
             // right align other columns
             for (col, width) in it {
@@ -998,7 +998,7 @@ impl<const N: usize> Table<N> {
         {
             let mut it = column_widths.iter();
             let width = it.next().unwrap();
-            _ = write!(&mut out, "{:-<width$} | ", ":");
+            _ = write!(&mut out, "| {:-<width$} | ", ":");
 
             // right align other columns
             for width in it {
@@ -1012,7 +1012,7 @@ impl<const N: usize> Table<N> {
 
             // left align first column
             let (col, width) = it.next().unwrap();
-            _ = write!(&mut out, "{col:<width$} | ");
+            _ = write!(&mut out, "| {col:<width$} | ");
 
             // right align other columns
             for (col, width) in it {
