@@ -651,8 +651,7 @@ async fn main() {
                 colored::control::unset_override();
             } else {
                 let output_content = format_markdown_report(&report, &args);
-                println!();
-                print!("{}", output_content);
+                println!("\n{output_content}");
             }
         }
         OutputFormat::PrComment => {
@@ -685,6 +684,7 @@ Total unsafe functions: {}
 Total statements in unsafe blocks: {unsafe_statements}
 Total static mut items: {static_mut_items}
 Total unwrap calls: {unwraps}
+
 ",
             colorize_percentage(report.total.unsafe_fns, report.total.total_fns)
         )
@@ -790,7 +790,7 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
     let mut out = String::new();
 
     // Header
-    out.push_str("## Safety Analysis Report\n\n");
+    out.push_str("## Crate Report\n\n");
 
     // Summary section
     let unsafe_fn_delta = diff.after_total.unsafe_fns - diff.before_total.unsafe_fns;
@@ -843,16 +843,16 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
     .count();
 
     if total_negative_changes == 0 && total_positive_changes > 0 {
-        out.push_str("**Safety improved!** This PR reduces unsafe code usage.\n\n");
+        out.push_str("This PR reduces unsafe code usage.\n\n");
     } else if total_negative_changes > 0 && total_positive_changes == 0 {
-        out.push_str("**Safety decreased.** This PR introduces more unsafe code.\n\n");
+        out.push_str("This PR introduces more unsafe code.\n\n");
     } else if total_negative_changes > 0 && total_positive_changes > 0 {
         out.push_str(
-            "**Mixed changes.** This PR has both safety improvements and regressions.\n\n",
+            "This PR has both quality improvements and regressions.\n\n",
         );
     } else {
         out.push_str(
-            "**No safety changes.** File changes detected but no impact on safety metrics.\n\n",
+            "**No safety changes.** File changes detected but no impact on quality metrics.\n\n",
         );
     }
 
