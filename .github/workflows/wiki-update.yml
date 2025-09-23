@@ -27,7 +27,6 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - uses: actions/checkout@v5
-      - run: crate-report --format markdown --output safety-report.md
 
       - name: Checkout wiki repository
         uses: actions/checkout@v5
@@ -38,19 +37,8 @@ jobs:
 
       - name: Update wiki with safety report
         run: |
-          # Copy the safety report to the wiki
-          cp safety-report.md wiki/Safety-Analysis.md
+          crate-report --output wiki/Safety-Analysis.md
 
-          # Add timestamp and commit info to the report
-          cd wiki
-          echo "" >> Safety-Analysis.md
-          echo "---" >> Safety-Analysis.md
-          echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> Safety-Analysis.md
-          echo "*Commit: [\`${{ github.sha }}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})*" \
-            >> Safety-Analysis.md
-
-      - name: Commit and push to wiki
-        run: |
           cd wiki
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
@@ -63,4 +51,3 @@ jobs:
           git add Safety-Analysis.md
           git commit -m "Update safety analysis from commit ${{ github.sha }}"
           git push
-
