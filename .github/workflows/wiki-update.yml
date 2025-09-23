@@ -39,6 +39,9 @@ jobs:
       - name: Update wiki with safety report
         run: |
           crate-report --output wiki/Safety-Analysis.md
+          ls
+          ls wiki
+          cat wiki/Safety-Analysis.md
 
           cd wiki
           git config --local user.email "action@github.com"
