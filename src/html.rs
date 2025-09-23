@@ -176,10 +176,10 @@ pub fn format_html_report(report: &Report, args: &Args) -> String {
         if headers == CodeStats::csv_headers() {
             let files = reader
                 .records()
-                .map(|result| {
+                .flat_map(|result| {
                     let record = result.unwrap();
-                    let row: [&str; 8] = record.deserialize(None).unwrap();
-                    CodeStats::from_csv_row(&row).unwrap()
+                    let row: [&str; 8] = record.deserialize(None).ok()?;
+                    Some(CodeStats::from_csv_row(&row)?)
                 })
                 .collect::<std::collections::BTreeMap<String, CodeStats>>();
 
