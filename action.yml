@@ -8,7 +8,7 @@ inputs:
     default: ${{ github.token }}
   version:
     required: false
-    default: v0.6.0
+    default: v0.7.0
 
 outputs:
   safety-report:
@@ -22,7 +22,7 @@ runs:
       shell: bash
       run: |
         mkdir -p ~/.local/bin
-        curl -L --proto '=https' --tlsv1.2 -sSf https://github.com/richardscollin/crate-report/releases/download/${{ version }}/crate-report -o ~/.local/bin/crate-report
+        curl -L --proto '=https' --tlsv1.2 -sSf https://github.com/richardscollin/crate-report/releases/download/${{ inputs.version }}/crate-report -o ~/.local/bin/crate-report
         chmod +x ~/.local/bin/crate-report
 
     - name: Generate baseline from base branch
