@@ -1,0 +1,66 @@
+---
+name: Update Wiki with Safety Report
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    name: Update Wiki with Safety Analysis
+
+    steps:
+      - name: Install crate-report
+        run: |
+          mkdir -p ~/.local/bin
+          curl -L --proto '=https' --tlsv1.2 -sSf \
+            https://github.com/richardscollin/crate-report/releases/download/v0.7.0/crate-report \
+            -o ~/.local/bin/crate-report
+          chmod +x ~/.local/bin/crate-report
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - uses: actions/checkout@v5
+      - run: crate-report --format markdown --output safety-report.md
+
+      - name: Checkout wiki repository
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update wiki with safety report
+        run: |
+          # Copy the safety report to the wiki
+          cp safety-report.md wiki/Safety-Analysis.md
+
+          # Add timestamp and commit info to the report
+          cd wiki
+          echo "" >> Safety-Analysis.md
+          echo "---" >> Safety-Analysis.md
+          echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> Safety-Analysis.md
+          echo "*Commit: [\`${{ github.sha }}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})*" \
+            >> Safety-Analysis.md
+
+      - name: Commit and push to wiki
+        run: |
+          cd wiki
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git add Safety-Analysis.md
+          git commit -m "Update safety analysis from commit ${{ github.sha }}"
+          git push
+
