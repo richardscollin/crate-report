@@ -168,7 +168,7 @@ pub fn format_html_report(report: &Report, args: &Args) -> String {
     {
         let headers: Vec<String> = reader
             .headers()
-            .unwrap()
+            .expect("must have headers")
             .into_iter()
             .map(|h| h.to_string())
             .collect();
