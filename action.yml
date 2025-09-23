@@ -6,10 +6,6 @@ inputs:
     description: 'GitHub token for commenting on PRs'
     required: true
     default: ${{ github.token }}
-  base-branch:
-    description: 'Base branch to compare against for baseline'
-    required: false
-    default: ${{ github.base_ref }}
 
 outputs:
   safety-report:
@@ -18,9 +14,6 @@ outputs:
   baseline-report:
     description: 'Path to the baseline report file'
     value: ${{ steps.generate-baseline.outputs.baseline-path }}
-  has-changes:
-    description: 'Whether safety changes were detected'
-    value: ${{ steps.check-changes.outputs.has-changes }}
 
 runs:
   using: 'composite'
@@ -40,8 +33,8 @@ runs:
       id: generate-baseline
       shell: bash
       run: |
-        git fetch origin ${{ inputs.base-branch }}
-        git checkout origin/${{ inputs.base-branch }}
+        git fetch origin ${{ github.base_ref }}
+        git checkout origin/${{ github.base_ref }}
         crate-report --format csv --output baseline.csv
         echo "baseline-path=baseline.csv" >> $GITHUB_OUTPUT
 
@@ -53,20 +46,8 @@ runs:
 
         echo "report-path=pr-comment.md" >> $GITHUB_OUTPUT
 
-    - name: Check for changes
-      id: check-changes
-      shell: bash
-      run: |
-        if [ -f pr-comment.md ] && [ -s pr-comment.md ]; then
-          echo "has-changes=true" >> $GITHUB_OUTPUT
-          echo "Generated safety analysis comment"
-        else
-          echo "has-changes=false" >> $GITHUB_OUTPUT
-          echo "Failed to generate safety analysis"
-        fi
-
     - name: Comment on PR
-      if: github.event_name == 'pull_request' && steps.check-changes.outputs.has-changes == 'true'
+      if: ${{ github.event_name == 'pull_request' }}
       shell: bash
       run: |
         # Look for existing bot comment to update
