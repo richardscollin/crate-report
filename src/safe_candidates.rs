@@ -1,36 +1,39 @@
-#!/usr/bin/env -S cargo +nightly -Zscript
----
-[package]
-edition = "2024"
-[dependencies]
-syn = { version = "2.0.104", features = ["full", "visit"] }
-walkdir = "2.5.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-colored = "3.0"
----
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+};
 
-use syn::{ItemFn, visit::Visit};
+use syn::{
+    ItemFn,
+    visit::Visit,
+};
 use walkdir::WalkDir;
 
 #[derive(Clone, Default, Debug)]
-struct FileStats {
-    filename: String,
-    stats: CodeStats,
+pub struct FileStats {
+    pub filename: String,
+    pub stats: CodeStats,
 }
 
 #[derive(Clone, Default, Debug)]
-struct CodeStats {
-    candidates: Vec<String>,
+pub struct Candidate {
+    pub fn_name: String,
+    pub line_number: usize,
 }
 
-struct CodeAnalyzer<'a> {
+#[derive(Clone, Default, Debug)]
+pub struct CodeStats {
+    pub candidates: Vec<Candidate>,
+}
+
+pub struct CodeAnalyzer<'a> {
     stats: &'a mut CodeStats,
 }
 
 impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
     fn visit_item_fn(&mut self, i: &'ast ItemFn) {
+        use syn::spanned::Spanned;
+
         if i.sig.unsafety.is_some() {
             // if function is unsafe and it has no raw pointer arguments add it to the list
             let has_raw_pointer = i.sig.inputs.iter().any(|arg| match arg {
@@ -41,7 +44,11 @@ impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
             });
 
             if !has_raw_pointer {
-                self.stats.candidates.push(i.sig.ident.to_string())
+                let candidate = Candidate {
+                    fn_name: i.sig.ident.to_string(),
+                    line_number: i.span().start().line,
+                };
+                self.stats.candidates.push(candidate)
             }
         }
         syn::visit::visit_item_fn(self, i);
@@ -62,7 +69,13 @@ fn analyze_file(path: &Path) -> Option<FileStats> {
     })
 }
 
-fn find_candidates(root: &str) -> Vec<FileStats> {
+/// find good candidates for functions to convert to being safe
+/// this is very simplistic, the heuristic is if the function
+/// has no raw pointers as parameters, it may be a good candidate
+///
+/// there may be other reasons why one of these functions can't be converted
+pub fn find_candidates(root: impl AsRef<Path>) -> Vec<FileStats> {
+    let root = root.as_ref();
     let mut file_reports = Vec::new();
 
     for entry in WalkDir::new(root)
@@ -70,7 +83,7 @@ fn find_candidates(root: &str) -> Vec<FileStats> {
         .filter_entry(|e| {
             e.file_name()
                 .to_str()
-                .map(|s| s != "target" && s != "tools") // skipping our own tool dir
+                .map(|s| s != "target")
                 .unwrap_or(true)
         })
         .filter_map(|e| e.ok())
@@ -83,10 +96,9 @@ fn find_candidates(root: &str) -> Vec<FileStats> {
     }
 
     // Strip common root prefix and find max filename length for alignment
-    let root_path = Path::new(&root);
     let mut max_filename_len = 0;
     for file_report in &mut file_reports {
-        if let Ok(relative_path) = Path::new(&file_report.filename).strip_prefix(root_path) {
+        if let Ok(relative_path) = Path::new(&file_report.filename).strip_prefix(root) {
             file_report.filename = relative_path.display().to_string();
         }
         max_filename_len = max_filename_len.max(file_report.filename.len());
@@ -95,24 +107,4 @@ fn find_candidates(root: &str) -> Vec<FileStats> {
     file_reports.sort_by(|a, b| a.filename.cmp(&b.filename));
     file_reports.retain(|r| !r.stats.candidates.is_empty());
     file_reports
-}
-
-// find good candidates for functions to convert to being safe
-// this is very simplistic, the heuristic is if the function
-// has no raw pointers as parameters, it may be a good candidate
-//
-// there may be other reasons why one of these functions can't be converted
-
-fn main() {
-    let args = std::env::args().collect::<Vec<String>>();
-    let root = &args[1];
-    let report = find_candidates(root);
-
-    for rep in report {
-        println!("{}", rep.filename);
-        for candidate in rep.stats.candidates {
-            println!("\t{candidate}");
-        }
-        println!();
-    }
 }

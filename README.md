@@ -82,6 +82,4 @@ src/main.rs,0,10,250,45,2,5,3
 src/lib.rs,1,5,100,20,0,0,1
 ```
 
-### PR Comment Format
-
-TODO link to example
+### [Example PR Comment](https://github.com/richardscollin/crate-report/pull/6)

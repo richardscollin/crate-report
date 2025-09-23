@@ -1,4 +1,5 @@
 mod html;
+mod safe_candidates;
 
 use std::{
     cmp,
@@ -52,6 +53,9 @@ struct Args {
         default_value = "markdown"
     )]
     format: OutputFormat,
+
+    #[arg(long, default_value_t = false)]
+    safe_candidates: bool,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -620,7 +624,34 @@ fn main() {
         eprintln!("Please specify a valid Rust crate directory.");
         eprintln!();
         _ = cmd.print_help();
-        std::process::exit(1);
+        return;
+    }
+
+    if args.safe_candidates {
+        let stats = safe_candidates::find_candidates(crate_root_path);
+
+        if !stats.is_empty() {
+
+        println!("These candidates are chosen using a very simple heuristic.
+If a function is unsafe and has no raw pointers as parameters, it may be a good candidate for making safe.
+Note that there may be other reasons why these functions shouldn't be converted.
+");
+
+        for stat in stats {
+            let safe_candidates::FileStats {
+                filename,
+                stats: code_stats,
+            } = stat;
+
+            println!("{filename}:");
+            for candidate in code_stats.candidates {
+                println!("\t{} @ {}:{}", candidate.fn_name, filename, candidate.line_number);
+            }
+        }
+        } else {
+            println!("No candidates found for functions to convert from unsafe to safe using a simple heuristic.")
+        }
+        return;
     }
 
     let report = generate_report(&args.crate_root);
