@@ -6,28 +6,24 @@ inputs:
     description: 'GitHub token for commenting on PRs'
     required: true
     default: ${{ github.token }}
+  version:
+    required: false
+    default: v0.6.0
 
 outputs:
   safety-report:
     description: 'Path to the generated safety report file'
     value: ${{ steps.generate-report.outputs.report-path }}
-  baseline-report:
-    description: 'Path to the baseline report file'
-    value: ${{ steps.generate-baseline.outputs.baseline-path }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Setup Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-
     - name: Install crate-report
       shell: bash
       run: |
-        # Install from the repository
-        cargo install --git https://github.com/richardscollin/crate-report crate-report
+        mkdir -p ~/.local/bin
+        curl -L --proto '=https' --tlsv1.2 -sSf https://github.com/richardscollin/crate-report/releases/download/${{ version }}/crate-report -o ~/.local/bin/crate-report
+        chmod +x ~/.local/bin/crate-report
 
     - name: Generate baseline from base branch
       id: generate-baseline
@@ -36,14 +32,9 @@ runs:
         git fetch origin ${{ github.base_ref }}
         git checkout origin/${{ github.base_ref }}
         crate-report --format csv --output baseline.csv
-        echo "baseline-path=baseline.csv" >> $GITHUB_OUTPUT
 
-    - name: Generate PR safety report
-      id: generate-report
-      shell: bash
-      run: |
+        git checkout ${{ github.sha }}
         crate-report --baseline baseline.csv --format pr-comment --output pr-comment.md
-
         echo "report-path=pr-comment.md" >> $GITHUB_OUTPUT
 
     - name: Comment on PR

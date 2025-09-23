@@ -20,7 +20,6 @@ use colored::{
     ColoredString,
     Colorize,
 };
-use rayon::prelude::*;
 use syn::{
     ExprMethodCall,
     ExprUnsafe,
@@ -461,16 +460,27 @@ fn generate_report(root: &str) -> Report {
         .filter(|e| e.path().extension().map(|ext| ext == "rs").unwrap_or(false))
         .collect();
 
+    let analyze_path = |e: &walkdir::DirEntry| {
+        let path = e.path();
+        let stats = analyze_file(path)?;
+        let relative_path = path
+            .strip_prefix(root_path)
+            .expect("must start with root prefix while walking dir");
+        Some((relative_path.display().to_string(), stats))
+    };
+
+    #[cfg(feature = "rayon")]
+    use rayon::prelude::*;
+    #[cfg(feature = "rayon")]
     let file_reports = file_paths
         .par_iter()
-        .flat_map(|e| {
-            let path = e.path();
-            let stats = analyze_file(path)?;
-            let relative_path = path
-                .strip_prefix(root_path)
-                .expect("must start with root prefix while walking dir");
-            Some((relative_path.display().to_string(), stats))
-        })
+        .flat_map(analyze_path)
+        .collect::<BTreeMap<String, CodeStats>>();
+
+    #[cfg(not(feature = "rayon"))]
+    let file_reports = file_paths
+        .iter()
+        .flat_map(analyze_path)
         .collect::<BTreeMap<String, CodeStats>>();
 
     Report {
@@ -594,8 +604,7 @@ fn colorize_simple(count: isize) -> ColoredString {
     count.to_string().color(color)
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let args = Args::parse();
 
     // Sanity check: ensure Cargo.toml exists in the crate root
@@ -847,9 +856,7 @@ fn format_pr_comment_report(report: &Report, args: &Args) -> String {
     } else if total_negative_changes > 0 && total_positive_changes == 0 {
         out.push_str("This PR introduces more unsafe code.\n\n");
     } else if total_negative_changes > 0 && total_positive_changes > 0 {
-        out.push_str(
-            "This PR has both quality improvements and regressions.\n\n",
-        );
+        out.push_str("This PR has both quality improvements and regressions.\n\n");
     } else {
         out.push_str(
             "**No safety changes.** File changes detected but no impact on quality metrics.\n\n",
