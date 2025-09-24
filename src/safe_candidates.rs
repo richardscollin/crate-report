@@ -30,6 +30,24 @@ pub struct CodeAnalyzer<'a> {
     stats: &'a mut CodeStats,
 }
 
+/// Check if a type is a pointer type (raw pointer or NonNull<T>)
+fn has_pointer_type(ty: &syn::Type) -> bool {
+    match ty {
+        // Raw pointers: *const T, *mut T
+        syn::Type::Ptr(_) => true,
+        // Path types like NonNull<T>
+        syn::Type::Path(type_path) => {
+            // Check if this is NonNull<T>
+            if let Some(segment) = type_path.path.segments.last() {
+                segment.ident == "NonNull"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
 impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
     fn visit_item_fn(&mut self, i: &'ast ItemFn) {
         use syn::spanned::Spanned;
@@ -38,7 +56,7 @@ impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
             // if function is unsafe and it has no raw pointer arguments add it to the list
             let has_raw_pointer = i.sig.inputs.iter().any(|arg| match arg {
                 syn::FnArg::Typed(pat_type) => {
-                    matches!(*pat_type.ty, syn::Type::Ptr(_))
+                    has_pointer_type(&pat_type.ty)
                 }
                 _ => false,
             });
