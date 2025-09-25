@@ -48,6 +48,25 @@ fn has_pointer_type(ty: &syn::Type) -> bool {
     }
 }
 
+/// Check if function has a Safety comment in its attributes
+fn has_safety_comment(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        // Check for doc comments (outer attributes that start with #[doc = "..."])
+        if attr.path().is_ident("doc")
+            && let syn::Meta::NameValue(meta_name_value) = &attr.meta
+            && let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(lit_str),
+                ..
+            }) = &meta_name_value.value
+        {
+            let comment = lit_str.value();
+            // Check if comment contains "#Safety" (case insensitive)
+            return comment.to_lowercase().contains("# safety");
+        }
+        false
+    })
+}
+
 impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
     fn visit_item_fn(&mut self, i: &'ast ItemFn) {
         use syn::spanned::Spanned;
@@ -55,13 +74,14 @@ impl<'a, 'ast> Visit<'ast> for CodeAnalyzer<'a> {
         if i.sig.unsafety.is_some() {
             // if function is unsafe and it has no raw pointer arguments add it to the list
             let has_raw_pointer = i.sig.inputs.iter().any(|arg| match arg {
-                syn::FnArg::Typed(pat_type) => {
-                    has_pointer_type(&pat_type.ty)
-                }
+                syn::FnArg::Typed(pat_type) => has_pointer_type(&pat_type.ty),
                 _ => false,
             });
 
-            if !has_raw_pointer {
+            // Exclude functions with Safety comments
+            let has_safety_doc = has_safety_comment(&i.attrs);
+
+            if !has_raw_pointer && !has_safety_doc {
                 let candidate = Candidate {
                     fn_name: i.sig.ident.to_string(),
                     line_number: i.span().start().line,

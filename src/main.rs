@@ -1,3 +1,4 @@
+mod bool_candidates;
 mod html;
 mod safe_candidates;
 
@@ -56,6 +57,9 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     safe_candidates: bool,
+
+    #[arg(long, default_value_t = false)]
+    bool_candidates: bool,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -631,25 +635,74 @@ fn main() {
         let stats = safe_candidates::find_candidates(crate_root_path);
 
         if !stats.is_empty() {
-
-        println!("These candidates are chosen using a very simple heuristic.
+            println!("These candidates are chosen using a very simple heuristic.
 If a function is unsafe and has no raw pointers as parameters, it may be a good candidate for making safe.
 Note that there may be other reasons why these functions shouldn't be converted.
 ");
 
-        for stat in stats {
-            let safe_candidates::FileStats {
-                filename,
-                stats: code_stats,
-            } = stat;
+            let file_count = stats.len();
+            let candidates_count: usize = stats.iter().map(|e| e.stats.candidates.len()).sum();
 
-            println!("{filename}:");
-            for candidate in code_stats.candidates {
-                println!("\t{} @ {}:{}", candidate.fn_name, filename, candidate.line_number);
+            for stat in stats {
+                let safe_candidates::FileStats {
+                    filename,
+                    stats: code_stats,
+                } = stat;
+
+                println!("{filename}:");
+                for candidate in code_stats.candidates {
+                    println!(
+                        "\t{} @ {}:{}",
+                        candidate.fn_name, filename, candidate.line_number
+                    );
+                }
             }
-        }
+            println!(
+                "\nFound {} candidates over {} files (more files total)",
+                candidates_count, file_count,
+            );
         } else {
-            println!("No candidates found for functions to convert from unsafe to safe using a simple heuristic.")
+            println!(
+                "No candidates found for functions to convert from unsafe to safe using a simple heuristic."
+            )
+        }
+        return;
+    }
+
+    if args.bool_candidates {
+        let stats = bool_candidates::find_candidates(crate_root_path);
+
+        if !stats.is_empty() {
+            println!("These candidates are chosen using a very simple heuristic.
+If a function returns i32 and all return statements return literal 0 or 1 values, it may be a good candidate for converting to return bool.
+Note that there may be other reasons why these functions shouldn't be converted.
+");
+
+            let file_count = stats.len();
+            let candidates_count: usize = stats.iter().map(|e| e.stats.candidates.len()).sum();
+
+            for stat in stats {
+                let bool_candidates::FileStats {
+                    filename,
+                    stats: code_stats,
+                } = stat;
+
+                println!("{filename}:");
+                for candidate in code_stats.candidates {
+                    println!(
+                        "\t{} @ {}:{}",
+                        candidate.fn_name, filename, candidate.line_number
+                    );
+                }
+            }
+            println!(
+                "\nFound {} candidates over {} files (more files total)",
+                candidates_count, file_count,
+            );
+        } else {
+            println!(
+                "No candidates found for functions to convert from i32 to bool using a simple heuristic."
+            )
         }
         return;
     }
