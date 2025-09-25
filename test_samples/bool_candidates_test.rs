@@ -44,6 +44,33 @@ fn simple_flag() -> i32 {
     }
 }
 
+// this should not be detected, it returns -1
+pub unsafe fn cmd_find_from_mouse(
+    fs: *mut cmd_find_state,
+    m: *mut mouse_event,
+    flags: cmd_find_flags,
+) -> i32 {
+    unsafe {
+        cmd_find_clear_state(fs, flags);
+
+        if !(*m).valid {
+            return -1;
+        }
+
+        (*fs).wp = transmute_ptr(cmd_mouse_pane(m, &raw mut (*fs).s, &raw mut (*fs).wl));
+        if (*fs).wp.is_null() {
+            cmd_find_clear_state(fs, flags);
+            return -1;
+        }
+        (*fs).w = (*(*fs).wl).window;
+
+        cmd_find_log_state(c!("cmd_find_from_mouse"), fs);
+    }
+    0
+}
+
+
+
 // Helper functions (don't matter for the analysis)
 fn some_condition() -> bool { true }
 fn get_state() -> Option<i32> { Some(1) }

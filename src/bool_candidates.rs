@@ -50,7 +50,7 @@ fn is_i32_type(ty: &syn::Type) -> bool {
 /// Check if an expression is a valid nested expression (if/match) that only returns 0 or 1
 fn is_valid_nested_expression(expr: &Expr) -> bool {
     match expr {
-        Expr::If(_) | Expr::Match(_) | Expr::Block(_) => check_expr_returns_only_zero_or_one(expr),
+        Expr::If(_) | Expr::Match(_) | Expr::Block(_) | Expr::Unsafe(_) => check_expr_returns_only_zero_or_one(expr),
         _ => false,
     }
 }
@@ -60,11 +60,24 @@ fn is_zero_or_one_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Lit(expr_lit) => match &expr_lit.lit {
             syn::Lit::Int(lit_int) => {
-                let value = lit_int.base10_parse::<i32>().unwrap_or(-1);
+                let value = lit_int.base10_parse::<i32>().unwrap_or(-999);
                 value == 0 || value == 1
             }
             _ => false,
         },
+        Expr::Unary(unary_expr) => {
+            // Handle negative literals like -1
+            if let syn::UnOp::Neg(_) = unary_expr.op {
+                if let Expr::Lit(expr_lit) = &*unary_expr.expr {
+                    if let syn::Lit::Int(lit_int) = &expr_lit.lit {
+                        let value = lit_int.base10_parse::<i32>().unwrap_or(999);
+                        let negative_value = -(value as i32);
+                        return negative_value == 0 || negative_value == 1;
+                    }
+                }
+            }
+            false
+        }
         _ => false,
     }
 }
@@ -141,6 +154,7 @@ fn check_expr_returns_only_zero_or_one(expr: &Expr) -> bool {
             }
         }
         Expr::Block(block_expr) => check_block_returns_only_zero_or_one(&block_expr.block),
+        Expr::Unsafe(unsafe_expr) => check_block_returns_only_zero_or_one(&unsafe_expr.block),
         Expr::If(if_expr) => {
             // Check the then branch
             if !check_block_returns_only_zero_or_one(&if_expr.then_branch) {
